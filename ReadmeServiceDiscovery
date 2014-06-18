@@ -1,0 +1,15 @@
+Windows-Service-Discovey-Zabbix
+
+This script was initally written by q1x of github. I have modified it a bit by slimming down how many JSON objects are returned by the script. It could be slimmed down quite a bit more if there were a few if statments to change "running" into an integer representing the state of the service on the machine running the script before sending it off to the Zabbix server. This would increase efficiency by sending integers instead of strings. The Zabbix server would have less data to process and would not have to run any regular expressions.
+
+Something like...
+
+1 = "running" 0 = "not running"
+
+Or
+
+0 = "Stopped" 1 = "Started"
+
+Blah Blah
+
+I will work on it.
