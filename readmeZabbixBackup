@@ -1,0 +1,96 @@
+zabbix-backup-bash-script
+=========================
+
+This backup script backs up the database on the zabbix server. It was created using 
+Redhat Enterprise 6 Linux. It should work with CentOS but I have not attempted it on
+that OS.
+
+You need to have the following rpm installed for this script to be successful.
+You also need to have a NFS share running on another machine on your network as the 
+backup is not stored locally.
+
+Security notes - Keep the permissions for the script at chmod 700, so that it is not 
+group or user readable.
+
+Backup Script
+
+The Zabbix backup script is written in BASH and backs up the following data:
+	- MySQL database using Percona Xtrabackup software
+	- SNMP MIBs
+	- Zabbix backup script
+	- Zabbix recovery script
+
+Programs that must be installed to use this script.
+  - percona-xtrabackup-2.0.2-461.rhel6.x86_64.rpm on Zabbix Server
+  - NFS on remote server
+
+The backup data is stored on an NFS share in the directory <nfs share directory> on the host
+<fqdnBackupMachineHostname>. The NFS share is mounted on <baseDir><nfsMountPoint> on the host
+<fqdnZabbixServerHostname>. A common user and group named backup have been configured to retain 
+the NFS share permissions between the hosts. The user uid is 600 and the group gid is 601.
+
+The backup script requires that a NFS share be setup on the remote server. I configured and opened
+up incoming TCP port connections on ports 2049, 111, and 10000-10006 on host <fqdnBackupMachineHostname> 
+using the following iptables firewall rules:
+
+-A INPUT -s <ip address of zabbix server> -m tcp -p tcp --dport 2049 -m state --state NEW -j ACCEPT
+-A INPUT -s <ip address of zabbix server> -m udp -p udp --dport 111 -m state --state NEW -j ACCEPT
+-A INPUT -s <ip address of zabbix server> -m udp -p udp --dport 10000:10006 -m state --state NEW -j ACCEPT
+
+I also changed modified the /etc/sysconfig/nfs file to designate the ports that I wantedd to export. 
+I exported the share as <nfs share directory> on <fqdnBackupMachineHostname> in /etc/exports with 
+the following line:
+
+<nfs share directory> <fqdnZabbixServerHostname>(rw,root_squash,anonuid=<user id number>,anongid=<group id number>)
+
+The script checks to make sure the <nfs share directory> NFS share is mounted on the host 
+<fqdnBackupMachineHostname>. If the share has been determined to be present then the script 
+uses the zabbix_sender command to send an “UP” status to the <fqdnZabbixServerHostname> server
+and the backup process portion of the script executes. 
+
+If the share has been determined to not be present then the script uses the zabbix_sender command 
+to send a “DOWN” status to the <fqdnZabbixServerHostname> server, upon receiving the “DOWN” status 
+the <fqdnZabbixServerHostname> server triggers and event and sends an alert to users with the title
+of “Zabbix Backup NFS Share NOT MOUNTED”. 
+
+The script keeps track of how long the script has been executing and sends the runtime to the 
+<fqdnZabbixServerHostname> server via the zabbix_sender command. 
+
+The innobackupex command from Percona Xtrabackup is used to back up the MySQL database while it is 
+running. The database files are stored in a temporary backup directory named mysqlBackup in the
+<baseDir><nfsMountPoint>backup/ directory on the <fqdnZabbixServerHostname> server. The script goes
+on to also copies the backup script, recovery script, and MIBs to the temporary directory 
+<baseDir><nfsMountPoint>backup/ within their own directories. 
+
+The temporary backup directory is then compressed using the tar command. The compression algorithm 
+used is .bz2 and I have found that it compresses the directory to about 28% of its original size. 
+At this moment the Zabbix temporary directory is around 5GB and when the task is complete the resulting
+compressed file is around 1.4GB. The most recent backup file size is sent to the <ZabbixServerHostname> 
+server every time the script runs. Once the directory has been compressed the compressed file is moved 
+to the backup-daily [year]-[month]-[day] directory on <baseDir><nfsMountPoint> on the <ZabbixServerHostname> 
+server and the temporary backup directory is deleted. 
+
+Currently the script keeps seven daily backups of the database, MIB, backup script, and recovery script 
+files. As the backup files become older they are automatically deleted from the system. If there are 
+fewer than five backups available then the automatic deletion process does not run. This allows the 
+system to retain at least five backups at all times. Once there are more than five backups then the 
+automatic deletion process begins to run again. The amount of current backups is sent to the 
+zabbix-test.uoregon server via zabbix_sender command every time the script runs. 
+To access backup information that is available in the Zabbix frontend do the following:
+	1. Log in to the Zabbix frontend.
+	2. Click the Monitoring tab.
+	3. Click the Latest data tab.
+	4. Select the Group from the drop down menu on the upper right-hand side of the page. Then select
+	the Zabbix server host.
+	5. Click the plus (+) sign next to the Backup.
+	Currently there are four items setup to retrieve information from the Backup Script. They are as follows:
+		Zabbix Backup Count on NFS Share
+			Displays the current amount of Zabbix backups, since the last backup. 
+		Zabbix Backup Current File Size
+			Displays the current file size of the last backup.
+		Zabbix Backup NFS Share Status
+			The status returned is either a 1 or a 0 (zero), the values are mapped in the item 
+			configuration to 1 = ”UP” and 0 = ”DOWN”. This item will trigger an event and alert
+			if the NFS share is not mounted on <fqdnZabbixServerHostname>. 
+		Zabbix Backup total Runtime
+			The time display format is [days]:[hours]:[minutes]:[seconds].
